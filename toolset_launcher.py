@@ -12,7 +12,7 @@ try:
     launcher_dir = os.path.dirname(os.path.abspath(__file__))
 except NameError:
     # If running in Script Editor
-    launcher_dir = r"C:\maya_rigging_tools"  # UPDATE THIS PATH
+    launcher_dir = r"C:\Dropbox\Developement\Git\Maya_Rigging_Tools"  # UPDATE THIS PATH
     print("Running in Script Editor, using hardcoded path")
 
 # Set project root (same as launcher_dir if launcher is at root)

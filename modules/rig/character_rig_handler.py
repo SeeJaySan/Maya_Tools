@@ -129,7 +129,7 @@ class MayaRigHandler(QtWidgets.QDialog):
         self.template_list.setMinimumHeight(150)
 
         refresh_templates_btn = QtWidgets.QPushButton("Refresh")
-        refresh_templates_btn.clicked.connect(self._refresh_template_list)
+        refresh_templates_btn.clicked.connect(self._refresh_create_rig_list)
 
         list_layout.addWidget(self.template_list)
 
@@ -176,15 +176,15 @@ class MayaRigHandler(QtWidgets.QDialog):
         self.tab_widget.addTab(rig_tab, "Create")
 
         # Populate the template list
-        self._refresh_template_list()
+        self._refresh_create_rig_list()
 
     def create_export_tab(self):
-        """Create the Export Prep tab"""
+        """Create the Export tab"""
         export_tab = QtWidgets.QWidget()
         export_layout = QtWidgets.QVBoxLayout(export_tab)
 
         # Header
-        header_label = QtWidgets.QLabel("Animation Export Preparation")
+        header_label = QtWidgets.QLabel("Export Rig/Animation")
         header_label.setStyleSheet(
             "background-color: #333333; color: white; padding: 8px; font-weight: bold;"
         )
@@ -228,6 +228,18 @@ class MayaRigHandler(QtWidgets.QDialog):
         # Process button
         process_btn = QtWidgets.QPushButton("Process Selected Rigs")
         process_btn.setMinimumHeight(40)
+        process_btn.clicked.connect(self._query_rig_for_export)
+        export_layout.addWidget(process_btn)
+
+        # Export Rig button
+        export_rig_btn = QtWidgets.QPushButton("Export Rig to FBX")
+        export_rig_btn.setMinimumHeight(40)
+        export_rig_btn.clicked.connect(self._export_rig)
+        export_layout.addWidget(export_rig_btn)
+
+        # Export Animation button
+        process_btn = QtWidgets.QPushButton("Export Animation to FBX")
+        process_btn.setMinimumHeight(40)
         process_btn.clicked.connect(self._export_animation)
         export_layout.addWidget(process_btn)
 
@@ -241,7 +253,7 @@ class MayaRigHandler(QtWidgets.QDialog):
         export_layout.addStretch()
 
         # Add tab to tab widget
-        self.tab_widget.addTab(export_tab, "Export Prep")
+        self.tab_widget.addTab(export_tab, "Export")
 
         # Populate the rig list
         self._refresh_rig_list()
@@ -249,150 +261,86 @@ class MayaRigHandler(QtWidgets.QDialog):
     # ==================================
     # Main Functions
     # ==================================
-
-    def _process_rig(self, rig_name):
+    
+    def _create_character_template(self):
         """
-        Process a specific rig to find its geometry and skeleton components.
-
-        Args:
-            rig_name (str): The name of the rig to process
+        Create a character rig template hierarchy.
         """
-        self.skl_sel = []
-        self.geo_sel = []
-        self.final_sel = []
+        # Get the rig name from the text field
+        rig_name = self.name_field.text()
 
-        # Look for SKL_lyr and GEO_lyr under this rig
-        skl_layer = f"{rig_name}:SKL_lyr"
-        geo_layer = f"{rig_name}:GEO_lyr"
+        if not rig_name:
+            QtWidgets.QMessageBox.warning(
+                self, "Warning", "Please enter a name for the rig."
+            )
+            return
 
-        # If no namespace, try without it
-        if not cmds.objExists(skl_layer):
-            skl_layer = "SKL_lyr"
+        # Create the full rig name with suffix
+        full_rig_name = f"{rig_name}_rig"
 
-        if not cmds.objExists(geo_layer):
-            geo_layer = "GEO_lyr"
+        # Create the top-level node
+        self.rig_node = cmds.createNode("transform", name=full_rig_name)
 
-        # Process skeleton layer
-        if cmds.objExists(skl_layer):
-            cmds.select(skl_layer)
-            connections = cmds.listConnections(skl_layer) or []
-            self.skl_sel = connections[1:] if len(connections) > 1 else []
-            print(f"SKL for {rig_name}:", self.skl_sel)
-        else:
-            print(f"Warning: '{skl_layer}' not found for rig '{rig_name}'")
+        # Create 'Controls" nodes under the rig
+        cmds.createNode("transform", name=f"{rig_name}_Controls", parent=self.rig_node)
 
-            # Try to find skeleton parts by examining rig structure
-            if cmds.objExists(f"{rig_name}|Skeleton"):
-                skeleton_node = f"{rig_name}|Skeleton"
-                skeleton_parts = (
-                    cmds.listRelatives(skeleton_node, allDescendents=True, type="joint")
-                    or []
-                )
-                if skeleton_parts:
-                    self.skl_sel = skeleton_parts
-                    print(
-                        f"Found {len(self.skl_sel)} skeleton parts under Skeleton node for '{rig_name}'"
-                    )
-            else:
-                # Fallback: find all joints under the rig
-                potential_skeletons = (
-                    cmds.listRelatives(rig_name, allDescendents=True, type="joint")
-                    or []
-                )
-                if potential_skeletons:
-                    self.skl_sel = potential_skeletons
-                    print(
-                        f"Found {len(self.skl_sel)} skeleton parts by hierarchy for '{rig_name}'"
-                    )
+        # Create 'Meshes' nodes under the rig
+        meshes_node = cmds.createNode("transform", name=f"{rig_name}_Meshes", parent=self.rig_node)
 
-        # Process geometry layer
-        if cmds.objExists(geo_layer):
-            cmds.select(geo_layer)
-            connections = cmds.listConnections(geo_layer) or []
-            self.geo_sel = connections[1:] if len(connections) > 1 else []
-            print(f"GEO for {rig_name}:", self.geo_sel)
-        else:
-            print(f"Warning: '{geo_layer}' not found for rig '{rig_name}'")
+        # Create 'ExportMeshes' and 'bak' nodes under 'Meshes'
+        cmds.createNode("transform", name=f"{rig_name}_ExportMeshes", parent=meshes_node)
+        cmds.createNode("transform", name=f"{rig_name}_bak", parent=meshes_node)
 
-            # Try to find geometry under ExportMeshes first
-            if cmds.objExists(f"{rig_name}|Meshes|ExportMeshes"):
-                export_node = f"{rig_name}|Meshes|ExportMeshes"
-                potential_geo = (
-                    cmds.listRelatives(export_node, allDescendents=True, type="mesh")
-                    or []
-                )
-                if potential_geo:
-                    # Get the transform nodes of the meshes
-                    geo_transforms = []
-                    for geo in potential_geo:
-                        parents = cmds.listRelatives(geo, parent=True)
-                        if parents:
-                            geo_transforms.append(parents[0])
-                    self.geo_sel = list(set(geo_transforms))  # Remove duplicates
-                    print(
-                        f"Found {len(self.geo_sel)} geometry parts under ExportMeshes for '{rig_name}'"
-                    )
-            else:
-                # Fallback: find all meshes under the rig
-                potential_geo = (
-                    cmds.listRelatives(rig_name, allDescendents=True, type="mesh") or []
-                )
-                # Get the transform nodes of the meshes
-                if potential_geo:
-                    geo_transforms = []
-                    for geo in potential_geo:
-                        parents = cmds.listRelatives(geo, parent=True)
-                        if parents:
-                            geo_transforms.append(parents[0])
-                    self.geo_sel = list(set(geo_transforms))  # Remove duplicates
-                    print(
-                        f"Found {len(self.geo_sel)} geometry parts by hierarchy for '{rig_name}'"
-                    )
+        # Create 'Skeleton' nodes under the rig
+        cmds.createNode("transform", name=f"{rig_name}_Skeleton", parent=self.rig_node)
 
-        # Compile final selection
-        self.final_sel = self.geo_sel + self.skl_sel
+        # Print the created hierarchy for verification
+        print("Hierarchy created:")
+        print(cmds.ls(self.rig_node, dag=True))
 
-        # Print and select the final selection
-        print(f"Complete selection for {rig_name}:", self.final_sel)
-        if self.final_sel:
-            cmds.select(self.final_sel)
-            return True
-        else:
-            print(f"Warning: No objects found to select for '{rig_name}'")
-            return False
+        # Refresh the rig lists
+        self._refresh_rig_list()
+        self._refresh_create_rig_list()
+
+        # Show a confirmation
+        QtWidgets.QMessageBox.information(
+            self,
+            "Success",
+            f"Character template '{full_rig_name}' created successfully.",
+        )
 
     def _create_rig(self):
         """
         Create a new rig based on the selected template.
         """
-        # Get the selected template
+        # Get the selection from list
         selected_items = self.template_list.selectedItems()
         if not selected_items:
             QtWidgets.QMessageBox.warning(
-                self, "Warning", "Please select a template rig from the list."
+                self, "Warning", "Please select a rig from the list."
             )
             return
 
         template_rig = selected_items[0].text()
 
         # Get the new rig name
-        new_rig_name = self.new_rig_name.text()
-        if not new_rig_name:
+        rig_name = self.rig_name.text()
+        if not self.rig_name.text():
             QtWidgets.QMessageBox.warning(
                 self, "Warning", "Please enter a name for the new rig."
             )
             return
 
         # Add '_rig' suffix if not already present
-        if not new_rig_name.endswith("_rig"):
-            new_rig_name = f"{new_rig_name}_rig"
+        if not rig_name.endswith("_rig"):
+            rig_name = f"{rig_name}_rig"
 
         # Check if a rig with this name already exists
-        if cmds.objExists(new_rig_name):
+        if cmds.objExists(rig_name):
             QtWidgets.QMessageBox.warning(
                 self,
                 "Warning",
-                f"A rig named '{new_rig_name}' already exists. Please choose a different name.",
+                f"A rig named '{rig_name}' already exists. Please choose a different name.",
             )
             return
 
@@ -402,31 +350,143 @@ class MayaRigHandler(QtWidgets.QDialog):
 
         try:
             # Additional setup based on options
-            if add_controls and setup_constraints:
+            if add_controls:
+                pass
+            if setup_constraints:
                 # This is a placeholder for additional rig setup - would need to be customized
                 # based on actual rigging requirements
                 pass
 
             # Refresh the rig lists
             self._refresh_rig_list()
-            self._refresh_template_list()
+            self._refresh_create_rig_list()
 
             # Show success message
             QtWidgets.QMessageBox.information(
                 self,
                 "Success",
-                f"Successfully created new rig '{new_rig_name}' from template '{template_rig}'.",
+                f"Successfully created new rig '{rig_name}' from template '{template_rig}'.",
             )
 
             # Select the new rig
-            cmds.select(new_rig_name)
+            cmds.select(rig_name)
 
         except Exception as e:
             QtWidgets.QMessageBox.critical(
                 self, "Error", f"Failed to create rig: {str(e)}"
             )
 
+    def _export_rig(self):
+        """
+        Process all selected rigs in the UI.
+        """
+        
+        self._query_rig_for_export()
+        
+        cmds.parent(world=True)
+        
+        # === Animation Settings ===
+        mel.eval("FBXExportBakeComplexAnimation -v true")
+        mel.eval("FBXExportBakeComplexStart -v 1")
+        mel.eval("FBXExportBakeComplexEnd -v 60")
+        mel.eval("FBXExportBakeResampleAnimation -v true")
+        mel.eval("FBXExportBakeComplexStep -v 1")
+        mel.eval("FBXExportUseSceneName -v false")
+        mel.eval("FBXExportAnimationOnly -v false")
+        mel.eval("FBXExportApplyConstantKeyReducer -v false")
+
+        # === Geometry Settings ===
+        mel.eval("FBXExportSmoothingGroups -v true")
+        mel.eval("FBXExportSmoothMesh -v true")
+        mel.eval("FBXExportHardEdges -v false")
+        mel.eval("FBXExportTriangulate -v false")
+        mel.eval("FBXExportTangents -v true")
+
+        # === Deformation ===
+        mel.eval("FBXExportSkins -v true")
+        #mel.eval("FBXExportShapes -v true")
+        #mel.eval("FBXExportBlendShapes -v true")
+
+        # === Connections & Constraints ===
+        mel.eval("FBXExportInputConnections -v false")
+        mel.eval("FBXExportConstraints -v false")
+
+        # === Cameras & Lights ===
+        mel.eval("FBXExportCameras -v false")
+        mel.eval("FBXExportLights -v false")
+
+        # === Materials & Textures ===
+        mel.eval("FBXExportEmbeddedTextures -v false")
+        mel.eval("FBXExportInstances -v false")
+        mel.eval("FBXExportReferencedAssetsContent -v false")
+
+        # === File & Output ===
+        mel.eval("FBXExportGenerateLog -v true")
+        mel.eval("FBXExportFileVersion -v \"FBX202000\"")
+        mel.eval("FBXExportInAscii -v false")
+
+        # === Advanced ===
+        #mel.eval("FBXExportAxisConversionMethod -v \"none\"")  # or "convertAnimation"
+        #mel.eval("FBXExportQuaternion -v \"euler\"")  # or "resample", "quaternion"
+
+        cmds.file("C:/dropbox/your_file.fbx",
+                force=True,
+                options="v=0;",
+                type="FBX export",
+                preserveReferences=True,
+                exportSelected=True)
+        
+
     def _export_animation(self):
+        #this = _query_rig_for_export(self)
+        
+        pass
+    # ==================================
+    # Helper Functions
+    # ==================================
+
+    def _find_rigs(self):
+        """
+        Find all transforms named 'rig' in the scene.
+        """
+        # Find all transforms in the scene
+        all_transforms = cmds.ls(type="transform")
+
+        # Filter for transforms that are named 'rig' or end with 'rig'
+        self.rigs = [
+            transform
+            for transform in all_transforms
+            if transform == "rig" or transform.endswith("_rig") or transform == "RIG"
+        ]
+
+        return self.rigs
+
+    def _find_template_rigs(self):
+        """
+        Find all rigs that can be used as templates.
+        """
+        # Find all transforms in the scene
+        all_rigs = self._find_rigs()
+
+        # For now, return all rigs as potential templates
+        # This can be enhanced with additional filtering logic if needed
+        return all_rigs
+
+    def _manage_namespaces(self):
+        """
+        Handle namespaces: remove unwanted ones and merge with parent.
+        """
+        default_namespaces = ["UI", "shared"]
+        namespaces = cmds.namespaceInfo(lon=True)
+
+        for ns in namespaces:
+            if ns not in default_namespaces:
+                try:
+                    cmds.namespace(removeNamespace=ns, mergeNamespaceWithParent=True)
+                except Exception as e:
+                    print(f"Could not merge namespace '{ns}': {e}")
+    
+    def _query_rig_for_export(self):
         """
         Process all selected rigs in the UI.
         """
@@ -465,50 +525,125 @@ class MayaRigHandler(QtWidgets.QDialog):
                 self, "Warning", "No objects found to select."
             )
 
-    # ==================================
-    # Helper Functions
-    # ==================================
-
-    def _manage_namespaces(self):
+    def _process_rig(self, rig_name):
         """
-        Handle namespaces: remove unwanted ones and merge with parent.
+        Process a specific rig to find its geometry and skeleton components.
+
+        Args:
+            rig_name (str): The name of the rig to process
         """
-        default_namespaces = ["UI", "shared"]
-        namespaces = cmds.namespaceInfo(lon=True)
+        self.skl_sel = []
+        self.geo_sel = []
+        self.final_sel = []
 
-        for ns in namespaces:
-            if ns not in default_namespaces:
-                try:
-                    cmds.namespace(removeNamespace=ns, mergeNamespaceWithParent=True)
-                except Exception as e:
-                    print(f"Could not merge namespace '{ns}': {e}")
+        # Look for SKL_lyr and GEO_lyr under this rig
+        skl_layer = f"{rig_name}_Skeleton"
+        geo_layer = f"{rig_name}_Meshes"
 
-    def _find_rigs(self):
+        # If no namespace, try without it
+        if not cmds.objExists(skl_layer):
+            skl_layer = "_Skeleton"
+
+        if not cmds.objExists(geo_layer):
+            geo_layer = "_Meshes"
+
+        # Process skeleton layer — only get the root joint
+        root_joint = None
+        if cmds.objExists(skl_layer):
+            # Try to find joint connections directly from the layer
+            connections = cmds.listConnections(skl_layer, type="joint") or []
+            if connections:
+                root_joint = connections[0]
+                print(f"Root SKL joint from connections for '{rig_name}': {root_joint}")
+        else:
+            print(f"Warning: '{skl_layer}' not found for rig '{rig_name}'")
+
+            # Try to find the skeleton group
+            skeleton_node = f"{rig_name}_Skeleton"
+            if cmds.objExists(skeleton_node):
+                children = cmds.listRelatives(skeleton_node, children=True, type="joint", fullPath=True) or []
+                if children:
+                    root_joint = children[0]
+                    print(f"Found root joint under '{skeleton_node}' for '{rig_name}': {root_joint}")
+            else:
+                # Fallback: look for any joint under the rig hierarchy
+                joints = cmds.listRelatives(rig_name, allDescendents=True, type="joint", fullPath=True) or []
+                if joints:
+                    # Optionally, reverse to bias toward roots if Maya returns leaves first
+                    joints.reverse()
+                    for jnt in joints:
+                        if not cmds.listRelatives(jnt, parent=True, type="joint"):
+                            root_joint = jnt
+                            print(f"Fallback root joint found for '{rig_name}': {root_joint}")
+                            break
+
+        if root_joint:
+            self.skl_sel = [root_joint]
+        else:
+            print(f"Warning: No root joint found for '{rig_name}'")
+
+        # Process geometry layer
+        if cmds.objExists(geo_layer):
+            connections = cmds.listConnections(geo_layer) or []
+            self.geo_sel = connections[1:] if len(connections) > 1 else []
+            print(f"GEO for {rig_name}:", self.geo_sel)
+        else:
+            print(f"Warning: '{geo_layer}' not found for rig '{rig_name}'")
+
+            # Try to find geometry under ExportMeshes first
+            export_node = f"{rig_name}_Meshes_ExportMeshes"
+            if cmds.objExists(export_node):
+                potential_geo = cmds.listRelatives(export_node, allDescendents=True, type="mesh") or []
+                if potential_geo:
+                    geo_transforms = []
+                    for geo in potential_geo:
+                        parents = cmds.listRelatives(geo, parent=True)
+                        if parents:
+                            geo_transforms.append(parents[0])
+                    self.geo_sel = list(set(geo_transforms))  # Remove duplicates
+                    print(f"Found {len(self.geo_sel)} geometry parts under ExportMeshes for '{rig_name}'")
+            else:
+                # Fallback: find all meshes under the rig
+                potential_geo = cmds.listRelatives(rig_name, allDescendents=True, type="mesh") or []
+                if potential_geo:
+                    geo_transforms = []
+                    for geo in potential_geo:
+                        parents = cmds.listRelatives(geo, parent=True)
+                        if parents:
+                            geo_transforms.append(parents[0])
+                    self.geo_sel = list(set(geo_transforms))
+                    print(f"Found {len(self.geo_sel)} geometry parts by hierarchy for '{rig_name}'")
+
+        # Compile final selection
+        self.final_sel = self.geo_sel + self.skl_sel
+        print(f"Complete selection for {rig_name}:", self.final_sel)
+
+        if self.final_sel:
+            cmds.select(self.final_sel)
+            return True
+        else:
+            print(f"Warning: No objects found to select for '{rig_name}'")
+            return False
+
+    def _refresh_create_rig_list(self):
         """
-        Find all transforms named 'rig' in the scene.
+        Refresh the list of rigs in the scene.
         """
-        # Find all transforms in the scene
-        all_transforms = cmds.ls(type="transform")
+        template_rigs = self._find_template_rigs()
+        self.template_list.clear()
 
-        # Filter for transforms that are named 'rig' or end with 'rig'
-        self.rigs = [
-            transform
-            for transform in all_transforms
-            if transform == "rig" or transform.endswith("_rig") or transform == "RIG"
-        ]
-
-        return self.rigs
-
-    def _find_template_rigs(self):
-        """
-        Find all rigs that can be used as templates.
-        """
-        # Find all transforms in the scene
-        all_rigs = self._find_rigs()
-
-        # For now, return all rigs as potential templates
-        # This can be enhanced with additional filtering logic if needed
-        return all_rigs
+        if template_rigs:
+            self.template_list.addItems(template_rigs)
+            self.rig_status_label.setText(
+                f"Found {len(template_rigs)} rig(s) in the scene."
+            )
+        else:
+            self.rig_status_label.setText("No  rigs found in the scene.")
+            QtWidgets.QMessageBox.information(
+                self,
+                "Info",
+                "No  rigs found in the scene. Create a rig template first.",
+            )
 
     def _refresh_rig_list(self):
         """
@@ -527,73 +662,6 @@ class MayaRigHandler(QtWidgets.QDialog):
                 "Info",
                 "No rigs found in the scene. Look for transforms named 'rig', 'RIG', or ending with '_rig'.",
             )
-
-    def _refresh_template_list(self):
-        """
-        Refresh the list of template rigs in the scene.
-        """
-        template_rigs = self._find_template_rigs()
-        self.template_list.clear()
-
-        if template_rigs:
-            self.template_list.addItems(template_rigs)
-            self.rig_status_label.setText(
-                f"Found {len(template_rigs)} template rig(s) in the scene."
-            )
-        else:
-            self.rig_status_label.setText("No template rigs found in the scene.")
-            QtWidgets.QMessageBox.information(
-                self,
-                "Info",
-                "No template rigs found in the scene. Create a character template first.",
-            )
-
-    def _create_character_template(self):
-        """
-        Create a character rig template hierarchy.
-        """
-        # Get the rig name from the text field
-        rig_name = self.name_field.text()
-
-        if not rig_name:
-            QtWidgets.QMessageBox.warning(
-                self, "Warning", "Please enter a name for the rig."
-            )
-            return
-
-        # Create the full rig name with suffix
-        full_rig_name = f"{rig_name}_rig"
-
-        # Create the top-level node
-        rig_node = cmds.createNode("transform", name=full_rig_name)
-
-        # Create 'Controls" nodes under the rig
-        cmds.createNode("transform", name="Controls", parent=rig_node)
-
-        # Create 'Meshes' nodes under the rig
-        meshes_node = cmds.createNode("transform", name="Meshes", parent=rig_node)
-
-        # Create 'ExportMeshes' and 'bak' nodes under 'Meshes'
-        cmds.createNode("transform", name="ExportMeshes", parent=meshes_node)
-        cmds.createNode("transform", name="bak", parent=meshes_node)
-
-        # Create 'Skeleton' nodes under the rig
-        cmds.createNode("transform", name="Skeleton", parent=rig_node)
-
-        # Print the created hierarchy for verification
-        print("Hierarchy created:")
-        print(cmds.ls(rig_node, dag=True))
-
-        # Refresh the rig lists
-        self._refresh_rig_list()
-        self._refresh_template_list()
-
-        # Show a confirmation
-        QtWidgets.QMessageBox.information(
-            self,
-            "Success",
-            f"Character template '{full_rig_name}' created successfully.",
-        )
 
     # ==================================
     # Help
