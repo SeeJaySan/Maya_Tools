@@ -127,10 +127,10 @@ class ToolsetMaster(MayaQWidgetDockableMixin, QtWidgets.QDialog):
     def create_widgets(self) -> None:
         """Create UI widgets and populate script selection lists."""
         self.tabs = {
+            "Wip": ToolsetTab(),
             "Model": ToolsetTab(),
             "Rig": ToolsetTab(),
             "Anim": ToolsetTab(),
-            "Wip": ToolsetTab()
         }
 
         # Populate script dropdowns for each tab
